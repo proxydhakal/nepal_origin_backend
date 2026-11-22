@@ -1,5 +1,8 @@
 version: '3.8'
 
+# Passwords come from your local .env — never hardcode secrets here.
+# Example: POSTGRES_PASSWORD=changeme in .env
+
 services:
   backend:
     build: .
@@ -11,10 +14,10 @@ services:
       - "8005:8005"
     environment:
       - POSTGRES_SERVER=db
-      - POSTGRES_USER=admin
-      - POSTGRES_PASSWORD=Nitrogen@55
-      - POSTGRES_DB=ecom_backend
-      - REDIS_URL=redis://redis:6379/0
+      - POSTGRES_USER=${POSTGRES_USER:-admin}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      - POSTGRES_DB=${POSTGRES_DB:-ecom_backend}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
     depends_on:
       - db
       - redis
@@ -24,9 +27,9 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     environment:
-      - POSTGRES_USER=admin
-      - POSTGRES_PASSWORD=Nitrogen@55
-      - POSTGRES_DB=ecom_backend
+      - POSTGRES_USER=${POSTGRES_USER:-admin}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      - POSTGRES_DB=${POSTGRES_DB:-ecom_backend}
     ports:
       - "5433:5432"
 
@@ -40,10 +43,10 @@ services:
     command: celery -A app.worker.celery_app worker --loglevel=info
     environment:
       - POSTGRES_SERVER=db
-      - POSTGRES_USER=admin
-      - POSTGRES_PASSWORD=Nitrogen@55
-      - POSTGRES_DB=ecom_backend
-      - REDIS_URL=redis://redis:6379/0
+      - POSTGRES_USER=${POSTGRES_USER:-admin}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      - POSTGRES_DB=${POSTGRES_DB:-ecom_backend}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
     depends_on:
       - db
       - redis
@@ -57,7 +60,7 @@ services:
     depends_on:
       - backend
     environment:
-      - VITE_API_URL=http://localhost:8005
+      - VITE_API_URL=${VITE_API_URL:-http://localhost:8005}
 
 volumes:
   postgres_data:

@@ -1,9 +1,14 @@
-# ---------- Secrets & local env ----------
+# ---------- Secrets & env (never commit real credentials) ----------
 .env
-.env.local
-.env.*.local
+.env.*
 !.env.example
-!.env.prod
+*.pem
+*.key
+*.p12
+*.pfx
+credentials.json
+secrets/
+.secrets/
 
 # ---------- Python ----------
 __pycache__/
@@ -51,6 +56,8 @@ Thumbs.db
 
 # ---------- Logs & runtime ----------
 *.log
+stderr.log
+stdout.log
 *.sqlite
 *.db
 celerybeat-schedule
@@ -60,13 +67,9 @@ cgi-bin/
 passenger_wsgi.py
 public/
 
-# ---------- Uploads (keep folder, ignore contents) ----------
-uploads/*
-!uploads/.gitkeep
+# ---------- Uploads (user/media content — not for git) ----------
+uploads/
+static/uploads/
 
 # ---------- Docker / local overrides ----------
 docker-compose.override.yml
-public/
-passenger_wsgi.py
-tmp/
-stderr.log
