@@ -114,8 +114,9 @@ async def save_product_image(file: UploadFile, product_id: int, variant_id: Opti
 def get_image_url(relative_path: str, base_url: str = "/") -> str:
     """Convert relative file path to URL."""
     # Remove leading slash if present to avoid double slashes
-    relative_path = relative_path.lstrip('/')
-    return f"{base_url.rstrip('/')}/{relative_path.replace('\\', '/')}"
+    relative_path = relative_path.lstrip("/").replace("\\", "/")
+    base = base_url.rstrip("/")
+    return f"{base}/{relative_path}"
 
 
 async def delete_product_image(file_path: str) -> None:
