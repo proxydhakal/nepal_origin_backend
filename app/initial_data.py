@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from app.core.database import SessionLocal
+from app.core.database import SessionLocal, engine
 from app.core.security import get_password_hash
 from app.models.user import User
 from app.models.product import Category
@@ -276,6 +276,7 @@ async def create_initial_data() -> None:
 
         logger.info("For full herbal products + sample orders run: python -m scripts.seed_dummy_data")
 
+    await engine.dispose()
+
 if __name__ == "__main__":
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(create_initial_data())
+    asyncio.run(create_initial_data())

@@ -10,7 +10,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from sqlalchemy import delete
-from app.core.database import SessionLocal
+from app.core.database import SessionLocal, engine
 from app.models.product import Product, Category, ProductVariant, ProductImage
 from app.models.cart import Cart, CartItem
 from app.models.wishlist import Wishlist, WishlistItem
@@ -60,6 +60,8 @@ async def clear_tables():
             await db.rollback()
             print(f"Error: {e}")
             raise
+
+    await engine.dispose()
 
 
 if __name__ == "__main__":

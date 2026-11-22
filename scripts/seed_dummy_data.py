@@ -12,7 +12,7 @@ from decimal import Decimal
 
 from sqlalchemy import select
 
-from app.core.database import SessionLocal
+from app.core.database import SessionLocal, engine
 from app.core.security import get_password_hash
 from app.models.user import User
 from app.models.product import Category, Product, ProductVariant
@@ -224,6 +224,8 @@ async def seed() -> None:
 
         await db.commit()
         logger.info("Dummy data seed complete.")
+
+    await engine.dispose()
 
 
 if __name__ == "__main__":

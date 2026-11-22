@@ -1,159 +1,167 @@
 #!/usr/bin/env python3
 """
-Script to create or update a superuser account with admin permissions.
+Interactive script to create or update a superuser with admin permissions.
 
 Usage:
     python scripts/create_superuser.py
     python -m scripts.create_superuser
 """
 
+from __future__ import annotations
+
 import asyncio
-import sys
+import getpass
 import logging
+import re
+import sys
 from pathlib import Path
 
 # Add parent directory to path to import app modules
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from app.core.database import SessionLocal
-from app.core.security import get_password_hash
-from app.models.user import User
-# Import all related models to ensure SQLAlchemy can resolve relationships
-from app.models.cart import Cart
-from app.models.wishlist import Wishlist
-from app.models.order import Order
-from app.models.review import Review
-from app.models.product import Category, Product, ProductVariant, ProductImage
-from app.models.user_group import UserGroup
-from app.models.permission import Permission
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+from app.core.database import SessionLocal, engine
+from app.core.security import get_password_hash
+from app.models.user import User
+# Import related models so SQLAlchemy can resolve relationships
+from app.models.cart import Cart  # noqa: F401
+from app.models.wishlist import Wishlist  # noqa: F401
+from app.models.order import Order  # noqa: F401
+from app.models.review import Review  # noqa: F401
+from app.models.product import Category, Product, ProductVariant, ProductImage  # noqa: F401
+from app.models.user_group import UserGroup
+from app.models.permission import Permission
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-# Superuser credentials
-SUPERUSER_EMAIL = "proxydhakal@gmail.com"
-SUPERUSER_PASSWORD = "SpringWinter!"
-SUPERUSER_NAME = "Proxy Dhakal"
+EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
-async def create_superuser():
-    """Create or update superuser account with admin permissions."""
+def _prompt_credentials() -> tuple[str, str, str]:
+    """Ask for email, name, and password on the terminal."""
+    print()
+    email = input("Admin email: ").strip().lower()
+    if not email or not EMAIL_RE.match(email):
+        raise SystemExit("Invalid email address.")
+
+    full_name = input("Full name (optional): ").strip() or email.split("@")[0].replace(".", " ").title()
+
+    password = getpass.getpass("Password (min 8 characters): ")
+    if len(password) < 8:
+        raise SystemExit("Password must be at least 8 characters.")
+
+    confirm = getpass.getpass("Confirm password: ")
+    if password != confirm:
+        raise SystemExit("Passwords do not match.")
+
+    return email, password, full_name
+
+
+async def _ensure_admin_group(db) -> UserGroup:
+    logger.info("Checking for admin group...")
+    result = await db.execute(
+        select(UserGroup)
+        .filter(UserGroup.name == "Administrators")
+        .options(selectinload(UserGroup.permissions))
+    )
+    admin_group = result.scalars().first()
+
+    permissions_result = await db.execute(select(Permission))
+    all_permissions = list(permissions_result.scalars().all())
+
+    if not admin_group:
+        logger.info("Creating 'Administrators' group...")
+        admin_group = UserGroup(
+            name="Administrators",
+            description="Full administrative access to all features",
+        )
+        if all_permissions:
+            admin_group.permissions = all_permissions
+        db.add(admin_group)
+        await db.flush()
+        logger.info("Created 'Administrators' group with %s permissions", len(all_permissions))
+        return admin_group
+
+    existing_ids = {p.id for p in admin_group.permissions}
+    missing = [p for p in all_permissions if p.id not in existing_ids]
+    if missing:
+        admin_group.permissions.extend(missing)
+        await db.flush()
+        logger.info("Updated 'Administrators' group with %s additional permissions", len(missing))
+    return admin_group
+
+
+async def create_superuser(email: str, password: str, full_name: str) -> None:
+    """Create or update a superuser account with admin permissions."""
     async with SessionLocal() as db:
         try:
-            # Check if user already exists
-            logger.info(f"Checking if user '{SUPERUSER_EMAIL}' exists...")
+            logger.info("Checking if user '%s' exists...", email)
             result = await db.execute(
-                select(User)
-                .filter(User.email == SUPERUSER_EMAIL)
-                .options(selectinload(User.groups))
+                select(User).filter(User.email == email).options(selectinload(User.groups))
             )
             user = result.scalars().first()
-            
-            # Ensure admin group exists with all permissions
-            logger.info("Checking for admin group...")
-            admin_group_result = await db.execute(
-                select(UserGroup)
-                .filter(UserGroup.name == "Administrators")
-                .options(selectinload(UserGroup.permissions))
-            )
-            admin_group = admin_group_result.scalars().first()
-            
-            if not admin_group:
-                logger.info("Creating 'Administrators' group...")
-                # Get all permissions
-                permissions_result = await db.execute(select(Permission))
-                all_permissions = permissions_result.scalars().all()
-                
-                admin_group = UserGroup(
-                    name="Administrators",
-                    description="Full administrative access to all features"
-                )
-                if all_permissions:
-                    admin_group.permissions = list(all_permissions)
-                db.add(admin_group)
-                await db.flush()
-                logger.info(f"✅ Created 'Administrators' group with {len(all_permissions)} permissions")
-            else:
-                # Ensure admin group has all permissions
-                permissions_result = await db.execute(select(Permission))
-                all_permissions = permissions_result.scalars().all()
-                existing_permission_ids = {p.id for p in admin_group.permissions}
-                new_permissions = [p for p in all_permissions if p.id not in existing_permission_ids]
-                if new_permissions:
-                    admin_group.permissions.extend(new_permissions)
-                    await db.flush()
-                    logger.info(f"✅ Updated 'Administrators' group with {len(new_permissions)} additional permissions")
-            
+            admin_group = await _ensure_admin_group(db)
+
             if user:
-                # Update existing user
-                logger.info(f"User '{SUPERUSER_EMAIL}' already exists. Updating to superuser...")
-                user.hashed_password = get_password_hash(SUPERUSER_PASSWORD)
+                logger.info("User '%s' already exists. Updating to superuser...", email)
+                user.hashed_password = get_password_hash(password)
                 user.is_superuser = True
                 user.is_active = True
                 user.is_verified = True
                 user.role = "admin"
-                if not user.full_name:
-                    user.full_name = SUPERUSER_NAME
-                
-                # Assign to admin group if not already assigned
+                user.full_name = full_name or user.full_name
                 if admin_group not in user.groups:
                     user.groups.append(admin_group)
-                    logger.info("✅ Assigned user to 'Administrators' group")
-                
+                    logger.info("Assigned user to 'Administrators' group")
                 db.add(user)
-                await db.commit()
-                await db.refresh(user, ['groups'])
-                logger.info(f"✅ Superuser '{SUPERUSER_EMAIL}' updated successfully!")
-                logger.info(f"   - Email: {user.email}")
-                logger.info(f"   - Name: {user.full_name}")
-                logger.info(f"   - Role: {user.role}")
-                logger.info(f"   - Is Superuser: {user.is_superuser}")
-                logger.info(f"   - Is Active: {user.is_active}")
-                logger.info(f"   - Is Verified: {user.is_verified}")
-                logger.info(f"   - Groups: {[g.name for g in user.groups]}")
+                action = "updated"
             else:
-                # Create new superuser
-                logger.info(f"Creating new superuser '{SUPERUSER_EMAIL}'...")
+                logger.info("Creating new superuser '%s'...", email)
                 user = User(
-                    email=SUPERUSER_EMAIL,
-                    hashed_password=get_password_hash(SUPERUSER_PASSWORD),
-                    full_name=SUPERUSER_NAME,
+                    email=email,
+                    hashed_password=get_password_hash(password),
+                    full_name=full_name,
                     is_active=True,
                     is_superuser=True,
                     is_verified=True,
-                    role="admin"
+                    role="admin",
                 )
-                # Assign to admin group
                 user.groups = [admin_group]
                 db.add(user)
-                await db.commit()
-                await db.refresh(user, ['groups'])
-                logger.info(f"✅ Superuser '{SUPERUSER_EMAIL}' created successfully!")
-                logger.info(f"   - Email: {user.email}")
-                logger.info(f"   - Name: {user.full_name}")
-                logger.info(f"   - Role: {user.role}")
-                logger.info(f"   - Is Superuser: {user.is_superuser}")
-                logger.info(f"   - Is Active: {user.is_active}")
-                logger.info(f"   - Is Verified: {user.is_verified}")
-                logger.info(f"   - Groups: {[g.name for g in user.groups]}")
-            
-            logger.info("\n🎉 Superuser setup complete!")
-            logger.info(f"   You can now login with:")
-            logger.info(f"   Email: {SUPERUSER_EMAIL}")
-            logger.info(f"   Password: {SUPERUSER_PASSWORD}")
-            logger.info(f"\n   Admin panel access: ✅ Enabled")
-            logger.info(f"   User has been assigned to 'Administrators' group with all permissions")
-            
+                action = "created"
+
+            await db.commit()
+            await db.refresh(user, ["groups"])
+
+            logger.info("Superuser '%s' %s successfully!", email, action)
+            logger.info("   - Email: %s", user.email)
+            logger.info("   - Name: %s", user.full_name)
+            logger.info("   - Role: %s", user.role)
+            logger.info("   - Is Superuser: %s", user.is_superuser)
+            logger.info("   - Groups: %s", [g.name for g in user.groups])
+            logger.info("")
+            logger.info("Login with the email and password you entered.")
+            logger.info("Admin panel access: enabled")
+        except SystemExit:
+            raise
         except Exception as e:
-            logger.error(f"❌ Error creating superuser: {e}", exc_info=True)
+            logger.error("Error creating superuser: %s", e, exc_info=True)
             await db.rollback()
             sys.exit(1)
+
+    await engine.dispose()
 
 
 if __name__ == "__main__":
     logger.info("=" * 60)
-    logger.info("Creating Superuser Account with Admin Permissions")
+    logger.info("Create / update Superuser (interactive)")
     logger.info("=" * 60)
-    asyncio.run(create_superuser())
+    try:
+        email, password, full_name = _prompt_credentials()
+    except (EOFError, KeyboardInterrupt):
+        print("\nCancelled.")
+        sys.exit(1)
+    asyncio.run(create_superuser(email, password, full_name))
