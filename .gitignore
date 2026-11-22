@@ -66,3 +66,7 @@ uploads/*
 
 # ---------- Docker / local overrides ----------
 docker-compose.override.yml
+public/
+passenger_wsgi.py
+tmp/
+stderr.log
