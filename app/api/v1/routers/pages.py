@@ -50,6 +50,14 @@ async def get_footer_pages(
     pages = await page_service.get_footer_pages(db)
     return pages
 
+
+@router.get("/header", response_model=List[Page])
+async def get_header_pages(
+    db: AsyncSession = Depends(get_db),
+) -> Any:
+    """Get all pages that should be shown in the header navigation."""
+    return await page_service.get_header_pages(db)
+
 @router.get("/{slug}", response_model=Page)
 async def get_page_by_slug(
     slug: str,

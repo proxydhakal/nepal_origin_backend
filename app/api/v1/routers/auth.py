@@ -1,3 +1,4 @@
+import logging
 from datetime import timedelta
 from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status, Body
@@ -15,8 +16,10 @@ from app.models.user import User
 from app.schemas.user import Token, User as UserSchema, LoginResponse
 from app.services.user_service import user_service
 from app.services.token_service import token_service
+from app.core.rate_limit import check_rate_limit, clear_rate_limit
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 COOKIE_MAX_AGE_ACCESS = settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
 COOKIE_MAX_AGE_REFRESH = settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60
@@ -44,8 +47,15 @@ def _set_auth_cookies(response: Response, access_token: str, refresh_token: str)
 
 
 def _clear_auth_cookies(response: Response) -> None:
-    response.delete_cookie(settings.COOKIE_ACCESS_TOKEN_NAME, path=settings.COOKIE_PATH)
-    response.delete_cookie(settings.COOKIE_REFRESH_TOKEN_NAME, path=settings.COOKIE_PATH)
+    # Must match Secure/SameSite used when setting cookies or browsers keep them
+    common = {
+        "path": settings.COOKIE_PATH,
+        "httponly": settings.COOKIE_HTTPONLY,
+        "secure": settings.COOKIE_SECURE,
+        "samesite": settings.COOKIE_SAMESITE,
+    }
+    response.delete_cookie(settings.COOKIE_ACCESS_TOKEN_NAME, **common)
+    response.delete_cookie(settings.COOKIE_REFRESH_TOKEN_NAME, **common)
 
 
 async def _user_to_schema(db, user_id: int) -> UserSchema | None:
@@ -57,6 +67,7 @@ async def _user_to_schema(db, user_id: int) -> UserSchema | None:
 
 @router.post("/login", response_model=LoginResponse)
 async def login_access_token(
+    request: Request,
     response: Response,
     db: AsyncSession = Depends(get_db),
     form_data: OAuth2PasswordRequestForm = Depends(),
@@ -64,19 +75,51 @@ async def login_access_token(
     """
     Login: sets HTTP-only cookies (access_token, refresh_token). Returns user. Use credentials: include and same-site origin.
     """
-    user = await user_service.authenticate(
-        db, email=form_data.username, password=form_data.password
-    )
+    check_rate_limit(request, key_prefix="login")
+    email = (form_data.username or "").strip()
+    password = form_data.password or ""
+
+    field_errors: list[dict] = []
+    if not email:
+        field_errors.append(
+            {"loc": ["body", "username"], "msg": "Email is required.", "type": "missing"}
+        )
+    elif "@" not in email or "." not in email.split("@")[-1]:
+        field_errors.append(
+            {"loc": ["body", "username"], "msg": "Please enter a valid email address.", "type": "value_error"}
+        )
+    if not password:
+        field_errors.append(
+            {"loc": ["body", "password"], "msg": "Password is required.", "type": "missing"}
+        )
+    if field_errors:
+        raise HTTPException(status_code=422, detail=field_errors)
+
+    try:
+        user = await user_service.authenticate(db, email=email, password=password)
+    except Exception as e:
+        logger.exception("Critical: login authentication failed: %s", e)
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to sign in right now. Please try again shortly.",
+        )
+
     if not user:
-        raise HTTPException(status_code=400, detail="Incorrect email or password")
+        raise HTTPException(status_code=400, detail="Incorrect email or password.")
     if not user.is_active:
-        raise HTTPException(status_code=400, detail="Inactive user")
+        raise HTTPException(status_code=400, detail="This account is inactive. Contact support.")
     if not user.is_verified:
         raise HTTPException(
             status_code=400,
             detail="Please verify your email before logging in. Check your inbox for the verification OTP.",
         )
+    if not user.is_superuser:
+        raise HTTPException(
+            status_code=403,
+            detail="Admin access only. This account cannot sign in here.",
+        )
 
+    clear_rate_limit(request, key_prefix="login")
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = security.create_access_token(subject=user.id, expires_delta=access_token_expires)
     refresh_token = security.create_refresh_token(subject=user.id)
@@ -174,7 +217,7 @@ async def recover_password(email: str, db: AsyncSession = Depends(get_db)) -> An
         token=token,
         full_name=user.full_name,
         logo_url=site_config.logo_url,
-        site_title=site_config.site_title or "SastoHo",
+        site_title=site_config.site_title or "Nepal Origin",
     )
     return {"msg": "Password recovery email sent"}
 
@@ -202,7 +245,7 @@ async def send_verification_otp(
             otp=otp,
             full_name=user.full_name,
             logo_url=site_config.logo_url,
-            site_title=site_config.site_title or "SastoHo",
+            site_title=site_config.site_title or "Nepal Origin",
             expire_minutes=10,
         )
     return {"msg": "If your email is registered and unverified, a verification OTP has been sent."}
@@ -270,6 +313,62 @@ async def verify_email(
     return {"msg": "Email verified successfully. You can now log in."}
 
 
+@router.post("/request-password-reset-otp", response_model=dict)
+async def request_password_reset_otp(
+    email: str = Body(..., embed=True),
+    db: AsyncSession = Depends(get_db),
+) -> Any:
+    """
+    Send OTP to email for password reset. Always returns success message for security.
+    """
+    from app.core import email as email_utils
+    from app.core.otp_store import generate_otp
+    from app.services.otp_service import set_otp_db, PURPOSE_PASSWORD_RESET
+    from app.api.v1.routers.site_config import get_or_create_site_config
+
+    user = await user_service.get_by_email_insensitive(db, email=email)
+    if user:
+        otp = generate_otp(6)
+        await set_otp_db(db, email=user.email, otp=otp, purpose=PURPOSE_PASSWORD_RESET)
+        site_config = await get_or_create_site_config(db)
+        await email_utils.send_password_reset_otp_email(
+            email_to=user.email,
+            otp=otp,
+            full_name=user.full_name,
+            logo_url=site_config.logo_url,
+            site_title=site_config.site_title or "Nepal Origin",
+            expire_minutes=10,
+        )
+    return {"msg": "If this email is registered, you will receive a password reset code."}
+
+
+@router.post("/verify-password-reset-otp", response_model=dict)
+async def verify_password_reset_otp(
+    email: str = Body(..., embed=True),
+    otp: str = Body(..., embed=True),
+    new_password: str = Body(..., embed=True),
+    db: AsyncSession = Depends(get_db),
+) -> Any:
+    """
+    Verify OTP and set new password. OTP is one-time use.
+    """
+    from app.services.otp_service import get_and_delete_otp_db, PURPOSE_PASSWORD_RESET
+
+    otp_stored = await get_and_delete_otp_db(db, email=email, purpose=PURPOSE_PASSWORD_RESET)
+    if not otp_stored or otp_stored != (otp or "").strip():
+        raise HTTPException(status_code=400, detail="Invalid or expired code")
+
+    user = await user_service.get_by_email_insensitive(db, email=email)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    hashed_password = security.get_password_hash(new_password)
+    user.hashed_password = hashed_password
+    db.add(user)
+    await db.commit()
+    return {"msg": "Password updated successfully. You can now log in."}
+
+
 @router.post("/reset-password/", response_model=dict)
 async def reset_password(
     token: str = Body(...),
@@ -277,20 +376,18 @@ async def reset_password(
     db: AsyncSession = Depends(get_db),
 ) -> Any:
     """
-    Reset password
+    Reset password using token from email link (legacy).
     """
     email = verify_password_reset_token(token)
     if not email:
         raise HTTPException(status_code=400, detail="Invalid token")
-    
+
     user = await user_service.get_by_email(db, email=email)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    
-    # Update password
+
     hashed_password = security.get_password_hash(new_password)
     user.hashed_password = hashed_password
     db.add(user)
     await db.commit()
-    
     return {"msg": "Password updated successfully"}

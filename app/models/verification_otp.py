@@ -7,10 +7,11 @@ from app.models.base import Base
 
 
 class VerificationOtp(Base):
-    """One-time verification code for email verification. Deleted after use or expiry."""
+    """One-time verification code (email verification or password reset). Deleted after use or expiry."""
 
     __tablename__ = "verification_otp"
 
     email: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     otp: Mapped[str] = mapped_column(String(10), nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    purpose: Mapped[str] = mapped_column(String(32), nullable=False, default="email_verification", index=True)

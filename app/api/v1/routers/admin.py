@@ -46,10 +46,12 @@ async def get_admin_stats(
     order_count_res = await db.execute(select(func.count(Order.id)))
     order_count = order_count_res.scalar()
 
-    # Total Revenue (Sum of paid/completed/delivered orders)
+    # Revenue from fulfilled + inquiry pipeline (herbal inquiry orders)
     revenue_res = await db.execute(
         select(func.coalesce(func.sum(Order.total_amount), 0)).filter(
-            Order.status.in_(["paid", "completed", "delivered", "shipped"])
+            Order.status.in_(
+                ["paid", "completed", "delivered", "shipped", "confirmed", "processing", "pending"]
+            )
         )
     )
     total_revenue = float(revenue_res.scalar() or 0)
@@ -87,13 +89,15 @@ async def get_admin_stats_charts(
     orders_result = await db.execute(orders_by_day_stmt)
     orders_rows = orders_result.all()
 
-    # Revenue per day (paid/completed/delivered/shipped)
+    # Revenue per day (includes inquiry pipeline statuses)
     revenue_by_day_stmt = (
         select(order_date.label("date"), func.coalesce(func.sum(Order.total_amount), 0).label("total"))
         .filter(
             order_date >= start_date,
             order_date <= end_date,
-            Order.status.in_(["paid", "completed", "delivered", "shipped"]),
+            Order.status.in_(
+                ["paid", "completed", "delivered", "shipped", "confirmed", "processing", "pending"]
+            ),
         )
         .group_by(order_date)
         .order_by(order_date)

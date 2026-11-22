@@ -1,6 +1,15 @@
-# Mero Shopping - E-Commerce Platform
+# Nepal Origin Backend
 
-A modern full-stack e-commerce application built with FastAPI (backend) and React + TypeScript (frontend).
+FastAPI backend for **Nepal Origin** — Himalayan herbal products inquiry store.
+
+**Repository:** [https://github.com/proxydhakal/nepal_origin_backend](https://github.com/proxydhakal/nepal_origin_backend.git)
+
+**Production API:** `https://api.nepalorigin.com.np`  
+**Storefront:** `https://nepalorigin.com.np`
+
+---
+
+A modern e-commerce / inquiry API built with FastAPI, SQLAlchemy (async), MySQL (production), and Redis.
 
 ## 🚀 Features
 

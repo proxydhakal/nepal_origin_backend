@@ -1,12 +1,12 @@
 from typing import Optional
 from datetime import datetime
-from pydantic import BaseModel, ConfigDict, Field, field_serializer
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_serializer
 
 class ContactSubmissionCreate(BaseModel):
-    name: str = Field(..., min_length=1, max_length=255)
-    email: str = Field(..., min_length=1, max_length=255)
-    subject: str = Field(..., min_length=1, max_length=500)
-    message: str = Field(..., min_length=1)
+    name: str = Field(..., min_length=2, max_length=255)
+    email: EmailStr
+    subject: str = Field(..., min_length=3, max_length=500)
+    message: str = Field(..., min_length=10)
     submission_type: str = Field(default="feedback", pattern="^(feedback|grievance)$")
 
 class ContactSubmissionOut(BaseModel):

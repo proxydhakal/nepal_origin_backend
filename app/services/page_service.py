@@ -3,6 +3,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.models.page import Page
 from app.schemas.page import PageCreate, PageUpdate
+from app.core.config import settings
+from app.core.html_sanitize import sanitize_html
 import re
 
 class PageService:
@@ -55,6 +57,15 @@ class PageService:
         result = await db.execute(stmt)
         return list(result.scalars().all())
 
+    async def get_header_pages(self, db: AsyncSession) -> List[Page]:
+        """Get all pages that should be shown in the header nav."""
+        stmt = select(Page).filter(
+            Page.show_in_header == True,
+            Page.is_published == True
+        ).order_by(Page.header_order, Page.title)
+        result = await db.execute(stmt)
+        return list(result.scalars().all())
+
     async def create_page(self, db: AsyncSession, page_in: PageCreate) -> Page:
         """Create a new page."""
         # Generate slug if not provided
@@ -70,14 +81,17 @@ class PageService:
                 existing = await self.get_by_slug(db, slug)
                 counter += 1
 
+        content = sanitize_html(page_in.content) if settings.SANITIZE_HTML else page_in.content
         page = Page(
             title=page_in.title,
             slug=slug,
-            content=page_in.content,
+            content=content,
             meta_description=page_in.meta_description,
             is_published=page_in.is_published,
             show_in_footer=page_in.show_in_footer,
             footer_order=page_in.footer_order,
+            show_in_header=page_in.show_in_header,
+            header_order=page_in.header_order,
             page_type=page_in.page_type
         )
         db.add(page)
@@ -92,7 +106,9 @@ class PageService:
             return None
 
         update_data = page_in.model_dump(exclude_unset=True)
-        
+        if settings.SANITIZE_HTML and "content" in update_data and update_data["content"] is not None:
+            update_data["content"] = sanitize_html(update_data["content"])
+
         # Handle slug update - regenerate if title changed
         if 'title' in update_data and 'slug' not in update_data:
             update_data['slug'] = self._generate_slug(update_data['title'])

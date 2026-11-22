@@ -44,7 +44,7 @@ async def create_user(
         otp=otp,
         full_name=user.full_name,
         logo_url=site_config.logo_url,
-        site_title=site_config.site_title or "SastoHo",
+        site_title=site_config.site_title or "Nepal Origin",
         expire_minutes=10,
     )
     return {

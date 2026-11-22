@@ -21,12 +21,26 @@ class ProductImage(ProductImageBase):
 # --- Product Variant ---
 class ProductVariantBase(BaseModel):
     sku: str
-    price: Decimal
+    price: Decimal  # NPR (Rs.)
+    price_usd: Optional[Decimal] = None
+    offer_price: Optional[Decimal] = None  # NPR offer / sale price
+    offer_price_usd: Optional[Decimal] = None
+    currency: str = "NPR"  # NPR | USD | BOTH
     stock_quantity: int = 0
     attributes: Optional[Dict[str, Any]] = None
 
 class ProductVariantCreate(ProductVariantBase):
     pass
+
+class ProductVariantUpdate(BaseModel):
+    sku: Optional[str] = None
+    price: Optional[Decimal] = None
+    price_usd: Optional[Decimal] = None
+    offer_price: Optional[Decimal] = None
+    offer_price_usd: Optional[Decimal] = None
+    currency: Optional[str] = None
+    stock_quantity: Optional[int] = None
+    attributes: Optional[Dict[str, Any]] = None
 
 class ProductVariant(ProductVariantBase):
     id: int

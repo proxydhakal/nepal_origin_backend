@@ -125,6 +125,10 @@ class CRUDProduct(CRUDBase[Product, ProductCreate, ProductCreate]):
                 product_id=db_obj.id,
                 sku=variant_in.sku,
                 price=variant_in.price,
+                price_usd=getattr(variant_in, "price_usd", None),
+                offer_price=getattr(variant_in, "offer_price", None),
+                offer_price_usd=getattr(variant_in, "offer_price_usd", None),
+                currency=getattr(variant_in, "currency", None) or "NPR",
                 stock_quantity=variant_in.stock_quantity,
                 attributes=variant_in.attributes
             )
@@ -323,6 +327,31 @@ class CRUDProduct(CRUDBase[Product, ProductCreate, ProductCreate]):
             db.add(variant)
             await db.commit()
             await db.refresh(variant)
+        return variant
+
+    async def update_variant(self, db: AsyncSession, sku: str, data: dict) -> Optional[ProductVariant]:
+        stmt = select(ProductVariant).filter(ProductVariant.sku == sku)
+        result = await db.execute(stmt)
+        variant = result.scalars().first()
+        if not variant:
+            return None
+        allowed = {
+            "sku",
+            "price",
+            "price_usd",
+            "offer_price",
+            "offer_price_usd",
+            "currency",
+            "stock_quantity",
+            "attributes",
+        }
+        for key, value in data.items():
+            if key in allowed and value is not None:
+                setattr(variant, key, value)
+        # Allow clearing optional prices with explicit null via sentinel - skip for now
+        db.add(variant)
+        await db.commit()
+        await db.refresh(variant)
         return variant
 
 category_service = CRUDCategory(Category)

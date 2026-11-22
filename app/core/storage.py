@@ -134,22 +134,31 @@ async def delete_product_image(file_path: str) -> None:
 
 async def save_site_asset(file: UploadFile, asset_type: str) -> str:
     """
-    Save uploaded site asset (logo or favicon).
+    Save uploaded site asset (logo, favicon, or social icon).
     Args:
         file: Uploaded file
-        asset_type: "logo" or "favicon"
+        asset_type: "logo", "favicon", or "social_<platform>"
     Returns:
         Relative path (e.g., uploads/site/logo_xxx.png)
     """
-    if asset_type not in ("logo", "favicon"):
-        raise HTTPException(status_code=400, detail="asset_type must be 'logo' or 'favicon'")
+    is_social = asset_type.startswith("social_")
+    if asset_type not in ("logo", "favicon") and not is_social:
+        raise HTTPException(
+            status_code=400,
+            detail="asset_type must be 'logo', 'favicon', or 'social_<platform>'",
+        )
     if file.content_type not in ALLOWED_SITE_IMAGE_TYPES:
         raise HTTPException(
             status_code=400,
             detail="Invalid file type. Allowed: JPG, PNG, SVG, ICO"
         )
     content = await file.read()
-    max_size = MAX_LOGO_SIZE if asset_type == "logo" else MAX_FAVICON_SIZE
+    if asset_type == "logo":
+        max_size = MAX_LOGO_SIZE
+    elif asset_type == "favicon":
+        max_size = MAX_FAVICON_SIZE
+    else:
+        max_size = MAX_LOGO_SIZE
     if len(content) > max_size:
         raise HTTPException(
             status_code=400,

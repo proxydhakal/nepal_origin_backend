@@ -7,7 +7,16 @@ from app.core.database import get_db
 from app.core.storage import save_category_image
 from app.core.query_params import str_to_bool
 from app.core.config import settings
-from app.schemas.product import Category, CategoryCreate, CategoryUpdate, Product, ProductCreate, ProductUpdate
+from app.schemas.product import (
+    Category,
+    CategoryCreate,
+    CategoryUpdate,
+    Product,
+    ProductCreate,
+    ProductUpdate,
+    ProductVariant,
+    ProductVariantUpdate,
+)
 from app.services.product_service import category_service, product_service
 from app.models.user import User
 
@@ -216,3 +225,19 @@ async def update_variant_inventory(
     if not variant:
         raise HTTPException(status_code=404, detail="Variant not found")
     return {"sku": variant.sku, "stock_quantity": variant.stock_quantity}
+
+
+@router.patch("/variants/{sku}", response_model=ProductVariant)
+async def update_variant(
+    sku: str,
+    data: ProductVariantUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+) -> Any:
+    """Update variant pricing (NPR/USD, offer prices), stock, and attributes. Admin only."""
+    if not current_user.is_superuser:
+        raise HTTPException(status_code=403, detail="Not enough permissions")
+    variant = await product_service.update_variant(db, sku=sku, data=data.model_dump(exclude_unset=True))
+    if not variant:
+        raise HTTPException(status_code=404, detail="Variant not found")
+    return variant

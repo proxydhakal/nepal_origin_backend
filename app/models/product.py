@@ -62,7 +62,11 @@ class Product(Base):
 class ProductVariant(Base):
     product_id: Mapped[int] = mapped_column(ForeignKey("product.id"))
     sku: Mapped[str] = mapped_column(String, unique=True, index=True)
-    price: Mapped[float] = mapped_column(DECIMAL(10, 2)) # Using DECIMAL for currency
+    price: Mapped[float] = mapped_column(DECIMAL(10, 2))  # NPR (Rs.) base price
+    price_usd: Mapped[Optional[float]] = mapped_column(DECIMAL(10, 2), nullable=True)
+    offer_price: Mapped[Optional[float]] = mapped_column(DECIMAL(10, 2), nullable=True)  # NPR offer
+    offer_price_usd: Mapped[Optional[float]] = mapped_column(DECIMAL(10, 2), nullable=True)
+    currency: Mapped[str] = mapped_column(String(10), default="NPR")  # NPR | USD | BOTH
     stock_quantity: Mapped[int] = mapped_column(Integer, default=0)
     
     # JSON for flexible attributes (e.g., {"color": "red", "size": "L"})

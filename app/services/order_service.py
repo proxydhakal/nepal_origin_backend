@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from app.models.order import Order, OrderItem
+from app.models.order import Order, OrderItem, OrderReply
 
 # 8-char alphanumeric (uppercase + digits) for order_number
 ORDER_NUMBER_CHARS = string.ascii_uppercase + string.digits
@@ -15,11 +15,12 @@ ORDER_NUMBER_LENGTH = 8
 
 def _generate_order_number() -> str:
     return "".join(random.choices(ORDER_NUMBER_CHARS, k=ORDER_NUMBER_LENGTH))
+
+
 from app.models.cart import Cart, CartItem
 from app.models.product import ProductVariant
 from app.models.address import Address
-from app.models.user import User
-from app.schemas.order import OrderCreate
+from app.schemas.order import OrderCreate, GuestOrderCreate
 from app.services.promo_service import promo_code_service
 
 class OrderService:
@@ -49,6 +50,7 @@ class OrderService:
             order_item = OrderItem(
                 product_variant_id=item.variant.id,
                 quantity=item.quantity,
+                quantity_unit="kg",
                 price_at_purchase=item.variant.price
             )
             order_items.append(order_item)
@@ -169,6 +171,89 @@ class OrderService:
         result = await db.execute(stmt)
         return result.scalars().first()
 
+    async def _unique_order_number(self, db: AsyncSession) -> str:
+        for _ in range(20):
+            code = _generate_order_number()
+            existing = await db.execute(select(Order).where(Order.order_number == code))
+            if existing.scalar_one_or_none() is None:
+                return code
+        raise ValueError("Could not generate unique order number")
+
+    async def create_guest_order(self, db: AsyncSession, order_in: GuestOrderCreate) -> Order:
+        """Create inquiry order from public form (no auth, no payment gateway)."""
+        total_amount = Decimal("0.00")
+        order_items: List[OrderItem] = []
+
+        for line in order_in.items:
+            stmt = select(ProductVariant).where(ProductVariant.id == line.product_variant_id).options(
+                selectinload(ProductVariant.product)
+            )
+            result = await db.execute(stmt)
+            variant = result.scalars().first()
+            if not variant:
+                raise ValueError(f"Product variant {line.product_variant_id} not found")
+            qty = Decimal(str(line.quantity))
+            if qty <= 0:
+                raise ValueError("Quantity must be greater than zero")
+            # Stock treated as available units of the same measure when integer stock is set
+            stock = variant.stock_quantity or 0
+            if stock > 0 and qty > Decimal(stock):
+                raise ValueError(f"Insufficient stock for {variant.sku}")
+
+            line_total = Decimal(str(variant.price)) * qty
+            total_amount += line_total
+            order_items.append(
+                OrderItem(
+                    product_variant_id=variant.id,
+                    quantity=qty,
+                    quantity_unit=line.quantity_unit,
+                    price_at_purchase=variant.price,
+                )
+            )
+            if stock > 0:
+                # Deduct whole units when quantity is whole; otherwise skip fractional deduct
+                try:
+                    variant.stock_quantity = max(0, stock - int(qty))
+                except (TypeError, ValueError):
+                    pass
+
+        shipping_address_data = {
+            "full_name": order_in.customer_name.strip(),
+            "phone_number": (order_in.customer_phone or "").strip() or None,
+            "street": order_in.customer_address.strip(),
+            "city": (order_in.city or "").strip() or None,
+            "country": order_in.customer_country.strip(),
+            "email": str(order_in.customer_email).strip(),
+        }
+
+        order_number = await self._unique_order_number(db)
+        order = Order(
+            user_id=None,
+            order_number=order_number,
+            status="pending",
+            total_amount=total_amount,
+            shipping_address=shipping_address_data,
+            payment_method="inquiry",
+            customer_name=order_in.customer_name.strip(),
+            customer_email=str(order_in.customer_email).strip().lower(),
+            customer_phone=(order_in.customer_phone or "").strip() or None,
+            customer_country=order_in.customer_country.strip(),
+            customer_notes=(order_in.customer_notes or "").strip() or None,
+        )
+        db.add(order)
+        await db.flush()
+        for item in order_items:
+            item.order_id = order.id
+            db.add(item)
+        await db.commit()
+
+        stmt = select(Order).filter(Order.id == order.id).options(
+            self._order_load_options(),
+            selectinload(Order.replies),
+        )
+        result = await db.execute(stmt)
+        return result.scalars().first()
+
     def _order_load_options(self):
         return selectinload(Order.items).selectinload(OrderItem.variant).selectinload(ProductVariant.product)
 
@@ -186,6 +271,7 @@ class OrderService:
         stmt = select(Order).filter(Order.id == order_id).options(
             self._order_load_options(),
             selectinload(Order.user),
+            selectinload(Order.replies),
         )
         result = await db.execute(stmt)
         return result.scalars().first()
@@ -214,6 +300,8 @@ class OrderService:
                 or_(
                     Order.order_number.ilike(term),
                     cast(Order.id, String).ilike(term),
+                    Order.customer_email.ilike(term),
+                    Order.customer_name.ilike(term),
                 )
             )
         if date_from:
@@ -256,5 +344,28 @@ class OrderService:
             await db.commit()
             await db.refresh(order)
         return order
+
+    async def add_admin_reply(
+        self,
+        db: AsyncSession,
+        order_id: int,
+        message: str,
+        admin_user_id: Optional[int] = None,
+    ) -> Optional[OrderReply]:
+        order = await self.get_order_admin(db, order_id=order_id)
+        if not order:
+            return None
+        reply = OrderReply(
+            order_id=order.id,
+            admin_user_id=admin_user_id,
+            message=message.strip(),
+            sent_to_email=order.customer_email
+            or (getattr(order.user, "email", None) if order.user else None),
+        )
+        db.add(reply)
+        await db.commit()
+        await db.refresh(reply)
+        return reply
+
 
 order_service = OrderService()

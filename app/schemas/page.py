@@ -10,6 +10,8 @@ class PageBase(BaseModel):
     is_published: bool = True
     show_in_footer: bool = False
     footer_order: int = 0
+    show_in_header: bool = False
+    header_order: int = 0
     page_type: str = "page"
 
 class PageCreate(PageBase):
@@ -23,6 +25,8 @@ class PageUpdate(BaseModel):
     is_published: Optional[bool] = None
     show_in_footer: Optional[bool] = None
     footer_order: Optional[int] = None
+    show_in_header: Optional[bool] = None
+    header_order: Optional[int] = None
     page_type: Optional[str] = None
 
 class Page(PageBase):
